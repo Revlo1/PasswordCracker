@@ -1,6 +1,7 @@
 import os
 import sys
 import hashlib
+from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt
 
 
 def main():
@@ -77,7 +78,32 @@ def main():
     else:
         print("Invalid attack mode")
         sys.exit()
-     
+
+
+def detect_algorithm(hash_value):
+    if hash_value.startswith('$1$'):
+        return 'md5crypt'
+    elif hash_value.startswith('$6$'):
+        return 'sha512crypt'
+    elif hash_value.startswith('$5$'):
+        return 'sha256crypt'
+    else:
+        return 'plain'
+
+
+def verify_hash(candidate, hash_value, algorithm):
+    try:
+        if algorithm == 'md5crypt':
+            return md5_crypt.verify(candidate, hash_value)
+        elif algorithm == 'sha512crypt':
+            return sha512_crypt.verify(candidate, hash_value)
+        elif algorithm == 'sha256crypt':
+            return sha256_crypt.verify(candidate, hash_value)
+        else:
+            return hashlib.new(algorithm, candidate.encode()).hexdigest() == hash_value
+    except Exception:
+        return False
+
 
 def generate_candidates(charset, length, current=""):
     if len(current) == length:
@@ -136,17 +162,18 @@ def dictionary_attack(algorithm, dict_file, input_file, output_file):
     for word in words:
         if not uncracked:
             break
-        candidate_hash = hashlib.new(algorithm, word.encode()).hexdigest()
-        if candidate_hash in uncracked:
-            print(f"[FOUND] {candidate_hash} -> {word}")
-            cracked[candidate_hash] = word
-            uncracked.remove(candidate_hash)
-            try:
-                with open(output_file, 'a') as out:
-                    out.write(f"{candidate_hash}:{word}\n")
-            except OSError as e:
-                print(f"Error: could not write to output file. {e}")
-                sys.exit()
+        for hash_value in list(uncracked):
+            algo = detect_algorithm(hash_value)
+            if verify_hash(word, hash_value, algo):
+                print(f"[FOUND] {hash_value} -> {word}")
+                cracked[hash_value] = word
+                uncracked.remove(hash_value)
+                try:
+                    with open(output_file, 'a') as out:
+                        out.write(f"{hash_value}:{word}\n")
+                except OSError as e:
+                    print(f"Error: could not write to output file. {e}")
+                    sys.exit()
 
     cracked_count = total - len(uncracked)
     for hash_value in uncracked:
@@ -182,19 +209,20 @@ def brute_force_attack(algorithm, input_file, output_file):
             break
         print(f"[INFO] Trying length {length}...")
         for candidate in generate_candidates(charset, length):
-            candidate_hash = hashlib.new(algorithm, candidate.encode()).hexdigest()
-            if candidate_hash in uncracked:
-                print(f"[FOUND] {candidate_hash} -> {candidate}")
-                cracked[candidate_hash] = candidate
-                uncracked.remove(candidate_hash)
-                try:
-                    with open(output_file, 'a') as out:
-                        out.write(f"{candidate_hash}:{candidate}\n")
-                except OSError as e:
-                    print(f"Error: could not write to output file. {e}")
-                    sys.exit()
-                if not uncracked:
-                    break
+            for hash_value in list(uncracked):
+                algo = detect_algorithm(hash_value)
+                if verify_hash(candidate, hash_value, algo):
+                    print(f"[FOUND] {hash_value} -> {candidate}")
+                    cracked[hash_value] = candidate
+                    uncracked.remove(hash_value)
+                    try:
+                        with open(output_file, 'a') as out:
+                            out.write(f"{hash_value}:{candidate}\n")
+                    except OSError as e:
+                        print(f"Error: could not write to output file. {e}")
+                        sys.exit()
+                    if not uncracked:
+                        break
 
     cracked_count = total - len(uncracked)
     for hash_value in uncracked:
